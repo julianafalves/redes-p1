@@ -3,27 +3,140 @@ import asyncio
 from tcp import Servidor
 import re
 
-
 def validar_nome(nome):
     return re.match(br'^[a-zA-Z][a-zA-Z0-9_-]*$', nome) is not None
-
 
 def sair(conexao):
     print(conexao, 'conexão fechada')
     conexao.fechar()
 
+def mensagens_QUIT(conexao):
+        lista_aux = []  
+        for canal in conexao.canais:
+            servidor.canais[canal].pop(conexao.nickid, None)
+            
+            for buscador in servidor.canais[canal]:
+                lista_aux = lista_aux + [(servidor.canais[canal][buscador])]
+        lista_aux = list(dict.fromkeys(lista_aux)) # Duplicados
+
+        for item in lista_aux: 
+                item.enviar(b':' + conexao.nickid + b' QUIT :Connection closed\r\n')
+        servidor.conexoes.remove(conexao)
+        return sair(conexao)
 
 def dados_recebidos(conexao, dados):
-    if dados == b'':
-        return sair(conexao)
-    print(conexao, dados)
+    dados = conexao.dados_residuais + dados
+    conexao.dados_residuais = b''
 
+
+
+    # Passo 2: 
+    dados = list(filter((b'').__ne__, dados.split(b'\r\n')))
+    if not dados.endswith(b'\r\n'):
+        conexao.dados_residuais = conexao.dados_residuais + dados.pop(-1)
+    
+        
+    if dados:
+        for mensagem in dados:   
+            request, info = mensagem.split(b' ', 1)
+            
+            
+            if request.upper() == b'PING': #Step 1
+                conexao.enviar(b':server PONG server :' + info + b'\r\n')
+
+            
+            if request.upper() == b'NICK': #Steps 3, 4 
+                if(validar_nome(info)):
+                    nick_usado = 0
+                    for i in servidor.conexoes :
+                        if i.nickid.upper() == info.upper() and i != conexao:
+                            nick_usado = 1
+                            conexao.enviar(b':server 433 ' + conexao.nickid + b' ' + info + b' :Nickname is already in use\r\n')
+
+                    
+                    if nick_usado == 0:
+                        if conexao.nickid == b'*': 
+                            conexao.enviar(b':server 001 ' + info + b' :Welcome\r\n' + b':server 422 ' + info + b' :MOTD File is missing\r\n')
+                            conexao.nickid = info
+                        
+                        else: 
+                            conexao.enviar(b':' + conexao.nickid + b' NICK ' + info + b'\r\n')
+                            conexao.nickid = info
+                else: 
+                    conexao.enviar(b':server 432 ' + conexao.nickid + b' ' + info + b' :Erroneous nickname\r\n') 
+
+            
+            if request.upper() == b'PRIVMSG': # Step 5
+                destino, text = info.split(b' ', 1)
+                if destino.startswith(b'#') and destino.upper() in servidor.canais.keys(): 
+                    for buscador in servidor.canais[destino.upper()]:
+                        if servidor.canais[destino.upper()][buscador] != conexao:
+                            servidor.canais[destino.upper()][buscador].enviar(b':' + conexao.nickid + b' PRIVMSG ' + destino + b' ' + text + b'\r\n')
+
+                else:
+                    dest_conexao = None
+                    for i in servidor.conexoes:
+                        if i.nickid.upper() == destino.upper():
+                            dest_conexao = i
+                    if dest_conexao:
+                        dest_conexao.enviar(b':' + conexao.nickid + b' PRIVMSG ' + dest_conexao.nickid + b' ' + text + b'\r\n')
+
+            
+            if request.upper() == b'JOIN': #Step 6
+                if not(validar_nome(info[1:]) and info.startswith(b'#')):
+                    conexao.enviar(b':server 403 ' + info + b' :No such channel.\r\n')
+                else:
+                    if info.upper() not in servidor.canais.keys():
+                        servidor.canais[info.upper()] = {}
+                    servidor.canais[info.upper()][conexao.nickid] = conexao 
+                    
+                    if info.upper() not in conexao.canais:
+                        conexao.canais.append(info.upper())
+                    partes = b''    
+                    
+                    for buscador in servidor.canais[info.upper()]:
+                        servidor.canais[info.upper()][buscador].enviar(b':' + conexao.nickid + b' JOIN :' + info + b'\r\n')
+                    
+                    # Step 9
+                    for buscador in sorted(servidor.canais[info.upper()].keys()): 
+                        partes += buscador + b' '
+                    send = b':server 353 ' + conexao.nickid + b' = ' + info + b' :' + partes
+                    while len(send) > 510:
+                        restante = send[:510]
+                        conexao.enviar(send + b'\r\n')
+                        send = restante
+                        
+                    conexao.enviar(send + b'\r\n' + b':server 366 ' + conexao.nickid + b' ' + info + b' :End of /NAMES list.\r\n')
+                    #conexao.enviar(b':server 366 ' + conexao.nickid + b' ' + info + b' :End of /NAMES list.\r\n')
+                        
+               
+            #Step 7
+            if request.upper() == b'PART':
+                info = info.split(b' ')[0]
+                if info.upper() in servidor.canais.keys():
+                    if conexao.nickid in servidor.canais[info.upper()].keys():
+                        for buscador in servidor.canais[info.upper()]:
+                            servidor.canais[info.upper()][buscador].enviar(b':' + conexao.nickid + b' PART ' + info + b'\r\n')
+                        del servidor.canais[info.upper()][conexao.nickid]
+                        conexao.canais.remove(info.upper())
+                                   
+            print(conexao, dados)
+    #Steps 8, 10
+    if dados == b'':
+        return mensagens_QUIT(conexao)
 
 def conexao_aceita(conexao):
     print(conexao, 'nova conexão')
+    conexao.nickid = b'*'
+    conexao.dados_residuais = b''
+    conexao.canais = []
+    servidor.conexoes.append(conexao)
     conexao.registrar_recebedor(dados_recebidos)
 
-
+    
+# Execução do servidor    
 servidor = Servidor(6667)
+servidor.canais = {}
+servidor.conexoes = []
 servidor.registrar_monitor_de_conexoes_aceitas(conexao_aceita)
 asyncio.get_event_loop().run_forever()
