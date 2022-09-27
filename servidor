@@ -10,7 +10,14 @@ def sair(conexao):
     print(conexao, 'conexão fechada')
     conexao.fechar()
 
-def mensagens_QUIT(conexao):
+
+
+def dados_recebidos(conexao, dados):
+    dados = conexao.dados_residuais + dados
+    conexao.dados_residuais = b''
+
+    #Steps 8, 10
+    if dados == b'':
         lista_aux = []  
         for canal in conexao.canais:
             servidor.canais[canal].pop(conexao.nickid, None)
@@ -23,13 +30,7 @@ def mensagens_QUIT(conexao):
                 item.enviar(b':' + conexao.nickid + b' QUIT :Connection closed\r\n')
         servidor.conexoes.remove(conexao)
         return sair(conexao)
-
-def dados_recebidos(conexao, dados):
-    dados = conexao.dados_residuais + dados
-    conexao.dados_residuais = b''
-
-
-
+        
     #step 2: 
     dados = list(filter((b'').__ne__, dados.split(b'\r\n')))
     if not(dados.endswith(b'\r\n')):
@@ -121,9 +122,7 @@ def dados_recebidos(conexao, dados):
                         conexao.canais.remove(info.upper())
                                    
             print(conexao, dados)
-    #Steps 8, 10
-    if dados == b'':
-        return mensagens_QUIT(conexao)
+
 
 def conexao_aceita(conexao):
     print(conexao, 'nova conexão')
