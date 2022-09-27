@@ -30,12 +30,12 @@ def dados_recebidos(conexao, dados):
                 item.enviar(b':' + conexao.nickid + b' QUIT :Connection closed\r\n')
         servidor.conexoes.remove(conexao)
         return sair(conexao)
-        
+
     #step 2: 
-    dados = list(filter((b'').__ne__, dados.split(b'\r\n')))
     if not(dados.endswith(b'\r\n')):
+        dados = list(filter((b'').__ne__, dados.split(b'\r\n')))
         conexao.dados_residuais = conexao.dados_residuais + dados.pop(-1)
-    
+    dados = list(filter((b'').__ne__, dados.split(b'\r\n')))
         
     if dados:
         for mensagem in dados:   
